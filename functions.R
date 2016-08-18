@@ -1,3 +1,30 @@
+parameter_plot <- function(model, ...){
+  UseMethod("parameter_plot", model)
+}
+
+parameter_plot.lm <- function(model, intercept = FALSE, ...){
+  data <- data.frame(
+    parameter = names(coef(model)),
+    point = coef(model),
+    B     = confint(model),
+    stringsAsFactors = FALSE
+  )
+  names(data)[3:4] <- c("lb","ub") 
+  
+  if(!intercept) data <- data[-1, , drop = FALSE]
+    
+  plot_point_ci(
+    point = 2,
+    lb = 3,
+    ub = 4,
+    data = data,
+    labels = 1,
+    vertical_lines = 0,
+    ...
+  )
+  invisible(data)
+}
+
 plot_point_ci <- function(
   point,
   lb,
@@ -8,6 +35,10 @@ plot_point_ci <- function(
   col = NULL,
   ...
 ){
+# BIG PICTURE: GENERATE A PLOT OF POINT ESTIMATES AND CONFIDENCE INTERVALS
+  
+  data <- data[nrow(data):1, , drop = FALSE]
+  
   xlim <- range(data[,c(lb,ub)])
   ylim <- c(1,nrow(data))
   plot.new()
@@ -16,7 +47,7 @@ plot_point_ci <- function(
     abline(v = vertical_lines, col = "gray80")
   }
   if(is.null(col)){
-    cols <- "black"
+    cols <- rep("black", nrow(data))
   }else{
     cols <- data[,col]
   }
@@ -326,8 +357,30 @@ formatp <- function(
 
 
 
-explicit_rcs <- 
-function(data, formula){
+explicit_rcs <- function(
+  data, 
+  formula
+){
+#
+# BIG PICTURE: CHANGE 
+#   y ~ rcs(x1, 3) + rcs(x2, 4) TO
+#   y ~ rcs(x1, parms = c(1, 2, 3)) + rcs(x2, parms = c(10, 15, 16, 27))
+#
+# FUNCTION WILL MORPH A FORMULA WHICH INCLUDES RESTRICTED 
+# CUBIC SPLINES PARAMETERIZED WITH THE NUMBER OF KNOTS
+# TO A FORMULA IN WHICH THE KNOT PLACEMENT IS EXPLICIT
+#
+# WHY:
+#   1. EXPLICIT KNOTS ALLOW THE FORMULA TO BE USED WITH NON-HMISC 
+#      FUNCTIONS, LIKE predict.lm IN THE stats PACKAGE
+#   2. ENSURE THAT KNOTS ARE STABLE
+#
+# OUTPUT: a formula in the form described above.
+#
+# INPUTS:
+#  formula - a formula with rcs items to make explicit
+#  data    - a data.frame from which the knots will be calculated
+
   ff <- gsub(" ", "", deparse(formula[[3]], width.cutoff = 500L))
   while(length(grep("^.*rcs\\(([[:alnum:]_\\.]+),[0-9]+\\).*$",ff))){
     variable <- sub("^.*rcs\\(([[:alnum:]_\\.]+),[0-9]+\\).*$", "\\1", ff)
@@ -343,30 +396,59 @@ function(data, formula){
   return(formula)
 }
 
-
-
-letter_pos <- function(x, pos=1) strsplit(x,"")[[1]][pos]
-
 npct <- function(x) sprintf("%i (%2.0f%%)", sum(x), mean(x)*100)
 
-character_to_numeric <- function(data){
-  for(i in seq_along(data)){
+character_to_numeric <- function(data, keep_character = NULL){
+# 
+# BIG PICTURE: CONVERT COLUMNS OF A data.frame THAT CAN BE NUMERIC
+#              TO NUMERIC
+#
+# OUTPUT: A data.frame WITH COLUMNS CONVERTED TO NUMERIC IF POSSIBLE
+#
+# INPUTS: 
+#   data           - data.frame
+#   keep_character - vector of positions or variable names which
+#                    should not be converted, even if potentially 
+#                    numeric.  For example, study_id.
+  
+  # IDENTIFY COLUMNS TO CHECK
+  if(is.character(keep_character)) keep_character <- which(names(data) %in% keep_character)
+  columns_to_check <- setdiff(seq_along(data), keep_character)
+  
+  for(i in columns_to_check){
+    
+    # ONLY CONSIDER CHARACTER COLUMNS
     if(!is.character(data[,i])) next
+
+    # MARK "NA" as NA
     na_idx <- data[ , i] %in% "NA"
     data[na_idx, i] <- NA_character_
-    char_idx <- grep("[[:alpha:]]|<|>|_", data[ , i])
-    if(length(char_idx)==0) tryCatch({data[ , i] <- as.numeric(data[ , i])}, warning = function(w) cat("problem column: ", i, "\n"))
+    
+    # CHECK THAT ALL ENTRIES ARE NUMERIC, i.e, numbers.numbers or numbers
+    numeric_idx <- grep("^[ ]*[0-9]*[\\.]{0,1}[0-9]*[ ]*$", data[, i])
+    
+    # IF NUMERIC, CONVERT TO NUMERIC
+    if(length(numeric_idx)==nrow(data)){
+      tryCatch(
+        expr    = {data[ , i] <- as.numeric(data[ , i])}, 
+        warning = function(w) cat("problem column: ", i, "\n")
+      )  
+    } 
   }
   return(data)
 }
 
 
 lineplot_ci <- function(
-  x, y, y_lb, y_ub, data = NULL, 
+  x, 
+  y, 
+  y_lb, 
+  y_ub, 
+  data     = NULL, 
   add      = FALSE,
   line_col = "darkblue",
   ci_col   = "gray80",
-  type     = "p",  
+  type     = "l",  
   xlim     = NULL, 
   ylim     = NULL,
   log      = "", 
@@ -377,7 +459,38 @@ lineplot_ci <- function(
   frame.plot  = axes,
   panel.first = grid(), 
   panel.last  = NULL, 
-  asp      = NA, ...){
+  asp      = NA, 
+  ...
+){
+#
+# BIG PICTURE: GENERATE A LINE PLOT WITH CONFIDENCE BAND
+#
+# OUTPUT: See big picture
+#  
+# INPUTS:
+#
+#  x        - character string or number of x-axis variable in data
+#  y        - character string or number of y-axis variable in data
+#  y_lb     - "         "      "  "      "  y lower bound   "  "
+#  x_lb     - "         "      "  "      "  y upper bound   "  "
+#  data     - data.frame with x, y, y_lb, x_lb
+#  
+#  -OR-
+#  
+#  x        - numeric vector, x-axis values
+#  y        - "       "     , y-axis values
+#  y_lb     - "       "     , y lower bound
+#  x_lb     - "       "     , y upper bound
+#  data     - NULL
+#
+# -OTHER ARGUMENTS-
+#  
+#  add      - logical. TRUE - add to previous plot, FALSE - generate new plot
+#  line_col - color of mean line.
+#  ci_col   - color of confidence band
+#  type     - type of mean line
+#  see list of arguments
+  
   if(!is.null(data)){
     x <- data[, x]
     y <- data[, y]
@@ -387,15 +500,15 @@ lineplot_ci <- function(
   #browser()
   if(is.null(ylim)) ylim <- range(y_lb,y_ub)
   if(is.null(xlim)) xlim <- range(x)
-  if(is.null(xlab)) xlab <- as.character(substitute(x))
-  if(is.null(ylab)) ylab <- as.character(substitute(y))
+  if(is.null(xlab)) xlab <- ""
+  if(is.null(ylab)) ylab <- ""
   if(!add){
     plot.new()
     plot.window(ylim = ylim, xlim = xlim, log = log, asp = asp, ...)
   }
   if(!is.null(panel.first)) panel.first
-  polygon(c(x,rev(x)),c(y_lb,rev(y_ub)), col = ci_col, border = ci_col)
-  lines(x,y,col=line_col,lwd=3)
+  polygon(c(x, rev(x)),c(y_lb, rev(y_ub)), col = ci_col, border = ci_col)
+  lines(x, y, col=line_col, lwd=3, type = type)
   if(axes){
     axis(1,...)
     axis(2,...)
@@ -405,7 +518,6 @@ lineplot_ci <- function(
   if(!is.null(panel.last)) panel.last
 }
 
-
 `%|%` <- function(a,b) paste0(a,b)
 
 findvarname <- function(var, data = NULL){
@@ -414,13 +526,18 @@ findvarname <- function(var, data = NULL){
   }else{
     return(sort(names(data)[grep(var,names(data),ignore.case=TRUE)]))
   }
-} 
+}
+
+# ALIAS FOR findvarname
+fvn <- function(var, data = NULL) findvarname(var, data)
 
 
 namify <- function(x){
+  # CHANGE VARIABLE NAMES OR CHARACTER STRINGS TO BE
+  # STYLE GUIDE APPROPRIATE VARIABLE NAMES
+  # SEE namify.default FOR LIST OF CHANGES
   UseMethod("namify",x)
 }
-
 
 namify.default <- function(txt){
   txt <- gsub("\\.", "_", txt)          # Change . to _
@@ -431,7 +548,6 @@ namify.default <- function(txt){
   txt <- gsub("[^_[:alnum:]]","",txt)   # Remove punctuation
   return(txt)
 }
-
 
 namify.data.frame <- function(x){
   names(x) <- namify(names(x))
@@ -454,9 +570,6 @@ out <- out[-1,]
 rownames(out) <- NULL
 return(out)
 }
-
-test_upload <- function(){"2016-06-09"}
-
 
 
 ###
