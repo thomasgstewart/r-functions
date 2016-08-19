@@ -1,3 +1,10 @@
+impute_boot <- function(
+  data,
+  g
+){
+# THE IMPUTE THEN BOOT FUNCTION
+}
+
 parameter_plot <- function(model, ...){
   UseMethod("parameter_plot", model)
 }
